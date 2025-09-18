@@ -1,0 +1,91 @@
+const Sequelize = require("sequelize");
+const dbConfig = require("../config/db.config.js");
+
+class Database {
+  constructor() {
+    this._sequelize = new Sequelize(
+      dbConfig.DB,
+      dbConfig.USER,
+      dbConfig.PASSWORD,
+      {
+        host: dbConfig.HOST,
+        dialect: dbConfig.dialect,
+        pool: dbConfig.pool,
+
+        dialectOptions: dbConfig.dialectOptions || {
+          ssl: {
+            require: true,
+            rejectUnauthorized: false,
+          },
+        },
+        logging: false,
+      }
+    );
+
+    this.Sequelize = Sequelize;
+    this.models = {};
+    this._loadModels();
+    this._associate();
+  }
+
+  _loadModels() {
+    this.models.Parqueo = require("./parqueo.js")(this._sequelize);
+    this.models.ParqueoWaitlist = require("./parqueo_wait_list.js")(this._sequelize);
+  }
+
+  _associate() {
+    const { Parqueo, ParqueoWaitlist } = this.models;
+
+    // Relaciones
+    // Un Parqueo tiene muchos registros de espera
+    Parqueo.hasMany(ParqueoWaitlist, {
+      foreignKey: "parqueoId",
+      as: "waitlist",
+      onUpdate: "CASCADE",
+      onDelete: "CASCADE",
+    });
+
+    // La waitlist pertenece a un Parqueo
+    ParqueoWaitlist.belongsTo(Parqueo, {
+      foreignKey: "parqueoId",
+      as: "parqueo",
+    });
+  }
+
+  async connect() {
+    try {
+      await this._sequelize.authenticate();
+      console.log("Conexión establecida con la base de datos");
+    } catch (error) {
+      console.error("Error al conectar con la base de datos:", error);
+      throw error;
+    }
+  }
+
+
+  async sync(options = { alter: false, force: false }) {
+    try {
+      await this._sequelize.sync(options);
+      console.log("Modelos sincronizados");
+    } catch (error) {
+      console.error("Error al sincronizar modelos:", error);
+      throw error;
+    }
+  }
+
+  getModel(name) {
+    return this.models[name];
+  }
+
+
+  get Op() {
+    return this.Sequelize.Op;
+  }
+
+
+  get sequelize() {
+    return this._sequelize;
+  }
+}
+
+module.exports = new Database();
