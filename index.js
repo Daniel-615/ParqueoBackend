@@ -2,11 +2,10 @@ const express = require("express");
 const cors = require("cors");
 const db = require("./src/models/index.js"); 
 const ParqueoRoutes = require("./src/routes/parqueo.route.js");
-const { PORT } = require("./src/config/db.config.js");
 class Server {
   constructor() {
     this.app = express();
-    this.port = PORT;
+    this.port = process.env.PORT;
 
     // Middlewares principales
     this.app.use(express.json());

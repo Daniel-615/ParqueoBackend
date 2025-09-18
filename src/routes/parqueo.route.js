@@ -17,6 +17,7 @@ class ParqueoRoutes{
         this.router.put('/desactivar/:id',this.controller.deactivateParqueo.bind(this.controller))
         //suscripcion para estar pendiente 
         this.router.post('/:id/notify', this.controller.sendNotifier.bind(this.controller));
+
     }
 }
 module.exports=ParqueoRoutes;
