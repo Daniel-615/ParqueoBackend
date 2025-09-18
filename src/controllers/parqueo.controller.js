@@ -13,6 +13,10 @@ class ParqueoController {
       nombre: parqueo.nombre,
       ocupado: !!parqueo.ocupado,
       activo: !!parqueo.activo,
+      updatedAt: parqueo.updatedAt ?new Date(parqueo.updatedAt).toLocaleString("es-Gt",{
+        timeZone: "America/Guatemala",
+      })
+      :null,
     };
     io.of("/parqueos").to("parqueos:all").emit("parqueo_updated", payload);
     io.of("/parqueos").to(`parqueo:${parqueo.id}`).emit("parqueo_updated", payload);
