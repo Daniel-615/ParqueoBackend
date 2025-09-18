@@ -1,18 +1,32 @@
+// server.js
 const express = require("express");
+const http = require("http");                 // 👈
 const cors = require("cors");
-const db = require("./src/models/index.js"); 
+const { Server: IOServer } = require("socket.io"); // 👈
+const db = require("./src/models/index.js");
 const ParqueoRoutes = require("./src/routes/parqueo.route.js");
+
 class Server {
   constructor() {
     this.app = express();
-    this.port = process.env.PORT;
+    this.port = process.env.PORT || 3000;
 
-    // Middlewares principales
+    this.httpServer = http.createServer(this.app); // 👈
+    this.io = new IOServer(this.httpServer, {      // 👈
+      cors: {
+        origin: process.env.FRONTEND_URL || "http://localhost:3002",
+        credentials: true,
+      },
+    });
+
+    this.app.locals.io = this.io; // 👈
+
+    // Middlewares
     this.app.use(express.json());
     this.app.use(express.urlencoded({ extended: true }));
-
     this.configureMiddlewares();
     this.configureRoutes();
+    this.configureSockets(); 
     this.connectDatabase();
   }
 
@@ -29,6 +43,28 @@ class Server {
     new ParqueoRoutes(this.app);
   }
 
+  configureSockets() {
+
+    const nsp = this.io.of("/parqueos");
+
+    nsp.on("connection", (socket) => {
+
+      socket.join("parqueos:all");
+
+
+      socket.on("subscribe", ({ parqueoId }) => {
+        if (parqueoId) socket.join(`parqueo:${parqueoId}`);
+      });
+
+
+      socket.on("toggle_parqueo", async ({ id, activo }) => {
+
+      });
+
+      socket.on("disconnect", () => {});
+    });
+  }
+
   async connectDatabase() {
     try {
       await db.connect();
@@ -42,7 +78,7 @@ class Server {
   }
 
   start() {
-    this.app.listen(this.port, () => {
+    this.httpServer.listen(this.port, () => {
       console.log(`Servidor corriendo en el puerto ${this.port}`);
     });
   }
