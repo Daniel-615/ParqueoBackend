@@ -1,3 +1,4 @@
+// controllers/stats.controller.js
 const db = require("../models");
 const sequelize = db.sequelize;
 
@@ -5,13 +6,12 @@ function toInt(val, def) {
   const n = Number.parseInt(val, 10);
   return Number.isFinite(n) && n > 0 ? n : def;
 }
-
-
 function clampDays(d, min = 1, max = 365) {
   return Math.max(min, Math.min(d, max));
 }
 
 class StatsController {
+  // GET /api/stats/hours?days=30
   static async hours(req, res) {
     try {
       const days = clampDays(toInt(req.query.days, 30));
@@ -21,24 +21,26 @@ class StatsController {
                COUNT(*)::int AS updates
         FROM parqueo_logs
         WHERE event = 'update'
-          AND created_at >= NOW() - INTERVAL :days || ' days'
+          AND created_at >= NOW() - ($1::int * INTERVAL '1 day')
         GROUP BY hora_gt
         ORDER BY hora_gt
         `,
-        { replacements: { days: String(days) } }
+        { bind: [days] }
       );
-
-      const data = rows.map(r => ({
-        hour_local_iso: new Date(r.hora_gt).toISOString(),
-        updates: r.updates
-      }));
-      res.json({ days, data });
+      res.json({
+        days,
+        data: rows.map(r => ({
+          hour_local_iso: new Date(r.hora_gt).toISOString(),
+          updates: r.updates
+        }))
+      });
     } catch (e) {
       console.error('stats.hours', e);
       res.status(500).json({ message: 'Error generando estadísticas por hora' });
     }
   }
 
+  // GET /api/stats/top-parqueos?days=30&limit=10
   static async topParqueos(req, res) {
     try {
       const days = clampDays(toInt(req.query.days, 30));
@@ -48,12 +50,12 @@ class StatsController {
         SELECT parqueo_id, COUNT(*)::int AS updates
         FROM parqueo_logs
         WHERE event = 'update'
-          AND created_at >= NOW() - INTERVAL :days || ' days'
+          AND created_at >= NOW() - ($1::int * INTERVAL '1 day')
         GROUP BY parqueo_id
         ORDER BY updates DESC
-        LIMIT :limit
+        LIMIT $2::int
         `,
-        { replacements: { days: String(days), limit } }
+        { bind: [days, limit] }
       );
       res.json({ days, limit, data: rows });
     } catch (e) {
@@ -62,7 +64,7 @@ class StatsController {
     }
   }
 
-
+  // GET /api/stats/daily?days=60
   static async daily(req, res) {
     try {
       const days = clampDays(toInt(req.query.days, 60));
@@ -72,25 +74,23 @@ class StatsController {
                COUNT(*)::int AS updates
         FROM parqueo_logs
         WHERE event = 'update'
-          AND created_at >= NOW() - INTERVAL :days || ' days'
+          AND created_at >= NOW() - ($1::int * INTERVAL '1 day')
         GROUP BY fecha_gt
         ORDER BY fecha_gt
         `,
-        { replacements: { days: String(days) } }
+        { bind: [days] }
       );
-
-      const data = rows.map(r => ({
-        date_local: r.fecha_gt, 
-        updates: r.updates
-      }));
-      res.json({ days, data });
+      res.json({
+        days,
+        data: rows.map(r => ({ date_local: r.fecha_gt, updates: r.updates }))
+      });
     } catch (e) {
       console.error('stats.daily', e);
       res.status(500).json({ message: 'Error generando estadísticas diarias' });
     }
   }
 
-
+  // GET /api/stats/heatmap?days=30
   static async heatmap(req, res) {
     try {
       const days = clampDays(toInt(req.query.days, 30));
@@ -100,16 +100,16 @@ class StatsController {
           SELECT (created_at AT TIME ZONE 'America/Guatemala') AS ts_gt
           FROM parqueo_logs
           WHERE event='update'
-            AND created_at >= NOW() - INTERVAL :days || ' days'
+            AND created_at >= NOW() - ($1::int * INTERVAL '1 day')
         )
-        SELECT EXTRACT(DOW FROM ts_gt)::int AS dow,  -- 0..6 (Sun..Sat)
-               EXTRACT(HOUR FROM ts_gt)::int AS hour,
-               COUNT(*)::int AS updates
+        SELECT EXTRACT(DOW FROM ts_gt)::int  AS dow,   -- 0..6
+               EXTRACT(HOUR FROM ts_gt)::int AS hour,  -- 0..23
+               COUNT(*)::int                 AS updates
         FROM base
         GROUP BY dow, hour
         ORDER BY dow, hour
         `,
-        { replacements: { days: String(days) } }
+        { bind: [days] }
       );
       res.json({ days, data: rows });
     } catch (e) {
