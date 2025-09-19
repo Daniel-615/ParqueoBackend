@@ -2,6 +2,7 @@
 const db = require("../models");
 const Parqueo = db.getModel('Parqueo');
 const ParqueoWaitlist = db.getModel('ParqueoWaitlist'); 
+const ParqueoLog = db.getModel('ParqueoLog'); 
 const { Op } = require("sequelize"); 
 const { enviarNotificacionParqueoDisponible } = require('../middleware/correos.advice');
 
@@ -43,7 +44,14 @@ class ParqueoController {
       return res.status(500).send({ message: "Error al crear el parqueo" });
     }
   }
-
+  //crear logs para hacer uso de gráficos luego.
+  async _logParqueo(parqueoId, event = 'update') {
+    try {
+      await ParqueoLog.create({ parqueo_id: parqueoId, event });
+    } catch (e) {
+      console.error('log error:', e.message);
+    }
+  }
   async updateParqueo(req, res) {
     try {
       const parqueos = req.body;
@@ -67,7 +75,10 @@ class ParqueoController {
 
         // Emitir cambio siempre
         this._emitUpdate(io, p);
-
+        if(estabaOcupado!==!!p.ocupado){
+          //creación de logs para los gráficos
+          await this._logParqueo(p.id,'update')
+        }
         // Transición a disponible: estaba ocupado y ahora libre, y activo
         if (p.activo && estabaOcupado === true && p.ocupado === false) {
           await this._notifyAndClearWaitlist(p, io); 

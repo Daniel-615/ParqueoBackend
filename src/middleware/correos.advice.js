@@ -20,7 +20,7 @@ async function enviarNotificacionParqueoDisponible(destinatario, parqueoId, info
     titulo = "Notificación de disponibilidad"
   } = info;
 
-  const ahora = new Date().toLocaleString("es-GT");
+  const ahora = new Date();
   const lineaUbicacion = ubicacion ? `\nUbicación: ${ubicacion}` : "";
   const lineaCupos = typeof cupos === "number" ? `\nCupos disponibles: ${cupos}` : "";
   const lineaExtra = mensajeExtra ? `\n\n${mensajeExtra}` : "";

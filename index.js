@@ -1,25 +1,24 @@
-// server.js
 const express = require("express");
-const http = require("http");                 // 👈
+const http = require("http");                 
 const cors = require("cors");
-const { Server: IOServer } = require("socket.io"); // 👈
+const { Server: IOServer } = require("socket.io"); 
 const db = require("./src/models/index.js");
 const ParqueoRoutes = require("./src/routes/parqueo.route.js");
-
+const StatsRoutes = require("./src/routes/stats.route.js");
 class Server {
   constructor() {
     this.app = express();
     this.port = process.env.PORT || 3000;
 
-    this.httpServer = http.createServer(this.app); // 👈
-    this.io = new IOServer(this.httpServer, {      // 👈
+    this.httpServer = http.createServer(this.app);
+    this.io = new IOServer(this.httpServer, {      
       cors: {
         origin: process.env.FRONTEND_URL || "http://localhost:3002",
         credentials: true,
       },
     });
 
-    this.app.locals.io = this.io; // 👈
+    this.app.locals.io = this.io; 
 
     // Middlewares
     this.app.use(express.json());
@@ -41,6 +40,7 @@ class Server {
 
   configureRoutes() {
     new ParqueoRoutes(this.app);
+    new StatsRoutes(this.app);
   }
 
   configureSockets() {

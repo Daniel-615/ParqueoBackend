@@ -11,12 +11,8 @@ class Database {
         host: dbConfig.HOST,
         dialect: dbConfig.dialect,
         pool: dbConfig.pool,
-
         dialectOptions: dbConfig.dialectOptions || {
-          ssl: {
-            require: true,
-            rejectUnauthorized: false,
-          },
+          ssl: { require: true, rejectUnauthorized: false },
         },
         logging: false,
       }
@@ -31,23 +27,31 @@ class Database {
   _loadModels() {
     this.models.Parqueo = require("./parqueo.js")(this._sequelize);
     this.models.ParqueoWaitlist = require("./parqueo_wait_list.js")(this._sequelize);
+    this.models.ParqueoLog = require("./parqueo_logs.js")(this._sequelize);
   }
 
   _associate() {
-    const { Parqueo, ParqueoWaitlist } = this.models;
+    const { Parqueo, ParqueoWaitlist, ParqueoLog } = this.models;
 
-    // Relaciones
-    // Un Parqueo tiene muchos registros de espera
     Parqueo.hasMany(ParqueoWaitlist, {
       foreignKey: "parqueoId",
       as: "waitlist",
       onUpdate: "CASCADE",
       onDelete: "CASCADE",
     });
-
-    // La waitlist pertenece a un Parqueo
     ParqueoWaitlist.belongsTo(Parqueo, {
       foreignKey: "parqueoId",
+      as: "parqueo",
+    });
+
+    Parqueo.hasMany(ParqueoLog, {
+      foreignKey: "parqueo_id",
+      as: "logs",
+      onUpdate: "CASCADE",
+      onDelete: "CASCADE",
+    });
+    ParqueoLog.belongsTo(Parqueo, {
+      foreignKey: "parqueo_id",
       as: "parqueo",
     });
   }
@@ -61,7 +65,6 @@ class Database {
       throw error;
     }
   }
-
 
   async sync(options = { alter: false, force: false }) {
     try {
@@ -77,11 +80,9 @@ class Database {
     return this.models[name];
   }
 
-
   get Op() {
     return this.Sequelize.Op;
   }
-
 
   get sequelize() {
     return this._sequelize;
