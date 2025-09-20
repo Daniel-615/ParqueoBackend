@@ -181,8 +181,9 @@ class ParqueoController {
 
       const jobs = subs.map(async (s) => {
         try {
-          await enviarNotificacionParqueoDisponible(s.email, parqueo.id,parqueo.updatedAt, {
+          await enviarNotificacionParqueoDisponible(s.email, parqueo.id, {
             nombre: parqueo.nombre,
+            fecha: parqueo.updatedAt
           });
           s.notifiedAt = new Date();
           await s.save();

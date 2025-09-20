@@ -10,21 +10,25 @@ const transporter = nodemailer.createTransport({
 });
 
 
-async function enviarNotificacionParqueoDisponible(destinatario, parqueoId, horaDisponible) {
+async function enviarNotificacionParqueoDisponible(destinatario, parqueoId, info={}) {
   const {
     nombre = "Parqueo",   
     asunto = "Parqueo disponible",
-    titulo = "Notificación de disponibilidad"
+    titulo = "Notificación de disponibilidad",
+    fecha
   } = info;
 
-  const ahora = horaDisponible ? new Date(horaDisponible).toLocaleString('es-GT', { timeZone: 'America/Guatemala' }) : new Date().toLocaleString('es-GT', { timeZone: 'America/Guatemala' });
+  if (!destinatario || !parqueoId) {
+    throw new Error("Faltan datos para enviar la notificación");
+  }
 
+  
   const textoPlano =
 `${titulo}
 
 ${nombre} (ID: ${parqueoId}) ya está disponible.
 
-Fecha y hora: ${ahora}
+Fecha y hora: ${fecha}
 `;
 
   const html =
