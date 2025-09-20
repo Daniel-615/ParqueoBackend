@@ -44,6 +44,11 @@ Fecha y hora: ${fecha}
           <tr><td style="height:8px;"></td></tr>
           <tr><td style="font-size:15px; color:#333; line-height:1.6;">
             <div><strong>${nombre}</strong> (ID: <code>${parqueoId}</code>) ya está disponible.</div>
+            <div style="margin-top:12px; color:#555;">Fecha y hora: <em>${fecha}</em></div>
+          </td></tr>
+          <tr><td style="height:24px;"></td></tr>
+          <tr><td style="font-size:12px; color:#999; text-align:center;">
+            Esta es una notificación automática. Por favor, no respondas a este correo.
           </td></tr>
         </table>
       </td>
