@@ -10,27 +10,21 @@ const transporter = nodemailer.createTransport({
 });
 
 
-async function enviarNotificacionParqueoDisponible(destinatario, parqueoId, info = {}) {
+async function enviarNotificacionParqueoDisponible(destinatario, parqueoId, horaDisponible) {
   const {
-    nombre = "Parqueo",
-    ubicacion = "",        
-    cupos,                 
-    mensajeExtra = "",     
+    nombre = "Parqueo",   
     asunto = "Parqueo disponible",
     titulo = "Notificación de disponibilidad"
   } = info;
 
-  const ahora = new Date();
-  const lineaUbicacion = ubicacion ? `\nUbicación: ${ubicacion}` : "";
-  const lineaCupos = typeof cupos === "number" ? `\nCupos disponibles: ${cupos}` : "";
-  const lineaExtra = mensajeExtra ? `\n\n${mensajeExtra}` : "";
+  const ahora = horaDisponible ? new Date(horaDisponible).toLocaleString('es-GT', { timeZone: 'America/Guatemala' }) : new Date().toLocaleString('es-GT', { timeZone: 'America/Guatemala' });
 
   const textoPlano =
 `${titulo}
 
-${nombre} (ID: ${parqueoId}) ya está disponible.${lineaUbicacion}${lineaCupos}
+${nombre} (ID: ${parqueoId}) ya está disponible.
 
-Fecha y hora: ${ahora}${lineaExtra}
+Fecha y hora: ${ahora}
 `;
 
   const html =
@@ -46,10 +40,6 @@ Fecha y hora: ${ahora}${lineaExtra}
           <tr><td style="height:8px;"></td></tr>
           <tr><td style="font-size:15px; color:#333; line-height:1.6;">
             <div><strong>${nombre}</strong> (ID: <code>${parqueoId}</code>) ya está disponible.</div>
-            ${ubicacion ? `<div>Ubicación: ${ubicacion}</div>` : ""}
-            ${typeof cupos === "number" ? `<div>Cupos disponibles: ${cupos}</div>` : ""}
-            <div style="margin-top:8px; color:#555;">Fecha y hora: ${ahora}</div>
-            ${mensajeExtra ? `<div style="margin-top:12px;">${mensajeExtra}</div>` : ""}
           </td></tr>
         </table>
       </td>
