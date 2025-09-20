@@ -28,10 +28,11 @@ class Database {
     this.models.Parqueo = require("./parqueo.js")(this._sequelize);
     this.models.ParqueoWaitlist = require("./parqueo_wait_list.js")(this._sequelize);
     this.models.ParqueoLog = require("./parqueo_logs.js")(this._sequelize);
+    this.models.Reserva=require("./reserva.js")(this._sequelize);
   }
 
   _associate() {
-    const { Parqueo, ParqueoWaitlist, ParqueoLog } = this.models;
+    const { Parqueo, ParqueoWaitlist, ParqueoLog,Reserva } = this.models;
 
     Parqueo.hasMany(ParqueoWaitlist, {
       foreignKey: "parqueoId",
@@ -54,6 +55,15 @@ class Database {
       foreignKey: "parqueo_id",
       as: "parqueo",
     });
+    
+    Parqueo.hasMany(Reserva,{
+      foreignKey: 'parqueo_id',
+      as: 'reservas'
+    })
+    Reserva.belongsTo(Parqueo,{
+      foreignKey: 'parqueo_id',
+      as: 'parqueo'
+    })
   }
 
   async connect() {

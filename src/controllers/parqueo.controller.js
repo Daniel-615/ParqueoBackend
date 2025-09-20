@@ -1,20 +1,39 @@
-
 const db = require("../models");
 const Parqueo = db.getModel('Parqueo');
-const ParqueoWaitlist = db.getModel('ParqueoWaitlist'); 
-const ParqueoLog = db.getModel('ParqueoLog'); 
-const { Op } = require("sequelize"); 
+const ParqueoWaitlist = db.getModel('ParqueoWaitlist');
+const ParqueoLog = db.getModel('ParqueoLog');
+const Reserva = db.getModel('Reserva');
+const { Op } = require("sequelize");
 const { enviarNotificacionParqueoDisponible } = require('../middleware/correos.advice');
 
-class ParqueoController {
+const ACTIVE_STATES = ['pending','active','in_use'];
 
+async function hasUpcomingOrActiveReservation(parqueoId, minutesAhead = 10) {
+  const now = new Date();
+  const soon = new Date(now.getTime() + minutesAhead * 60 * 1000);
+  const count = await Reserva.count({
+    where: {
+      parqueo_id: parqueoId,
+      status: ACTIVE_STATES,
+      [Op.or]: [
+        // en curso
+        { from: { [Op.lte]: now }, to: { [Op.gt]: now } },
+        // arranca pronto
+        { from: { [Op.lte]: soon }, to: { [Op.gt]: now } },
+      ],
+    },
+  });
+  return count > 0;
+}
+
+class ParqueoController {
   _emitUpdate(io, parqueo) {
     const payload = {
       id: parqueo.id,
       nombre: parqueo.nombre,
       ocupado: !!parqueo.ocupado,
       activo: !!parqueo.activo,
-      updatedAt: parqueo.updatedAt ?new Date(parqueo.updatedAt).toISOString(): null
+      updatedAt: parqueo.updatedAt ? new Date(parqueo.updatedAt).toISOString() : null
     };
     io.of("/parqueos").to("parqueos:all").emit("parqueo_updated", payload);
     io.of("/parqueos").to(`parqueo:${parqueo.id}`).emit("parqueo_updated", payload);
@@ -24,7 +43,7 @@ class ParqueoController {
     try {
       const parqueos = await Parqueo.findAll({ where: { activo: true } });
       return res.status(200).send(parqueos);
-    } catch (err) {
+    } catch {
       return res.status(500).send({ message: "Error al obtener los parqueos" });
     }
   }
@@ -35,16 +54,16 @@ class ParqueoController {
       if (!nombre) return res.status(400).send({ message: "El nombre es obligatorio" });
 
       const nuevoParqueo = await Parqueo.create({ nombre, activo: true, ocupado: false });
-      // Emitir creación como actualización
       const io = req.app.locals.io;
       this._emitUpdate(io, nuevoParqueo);
 
       return res.status(201).send({ message: "Parqueo creado exitosamente", parqueo: nuevoParqueo });
-    } catch (err) {
+    } catch {
       return res.status(500).send({ message: "Error al crear el parqueo" });
     }
   }
-  //crear logs para hacer uso de gráficos luego.
+
+  // logs para estadísticas
   async _logParqueo(parqueoId, event = 'update') {
     try {
       await ParqueoLog.create({ parqueo_id: parqueoId, event });
@@ -52,6 +71,7 @@ class ParqueoController {
       console.error('log error:', e.message);
     }
   }
+
   async updateParqueo(req, res) {
     try {
       const parqueos = req.body;
@@ -71,17 +91,50 @@ class ParqueoController {
 
         const estabaOcupado = !!p.ocupado;
         p.ocupado = ocupado;
-        await p.save();
+        await p.save(); 
+
+        // libre -> ocupado : poner reserva en uso si aplica
+        if (!estabaOcupado && p.ocupado) {
+          const now = new Date();
+          const r = await Reserva.findOne({
+            where: {
+              parqueo_id: p.id,
+              status: ['pending','active'],
+              from: { [Op.lte]: now },
+              to:   { [Op.gt]: now },
+            },
+            order: [['from','DESC']],
+          });
+          if (r) await r.update({ status: 'in_use', checked_in_at: now });
+        }
+
+        // ocupado -> libre : completar reserva en uso si aplica
+        if (estabaOcupado && !p.ocupado) {
+          const now = new Date();
+          const r = await Reserva.findOne({
+            where: {
+              parqueo_id: p.id,
+              status: 'in_use',
+              to: { [Op.gte]: new Date(now.getTime() - 30*60*1000) }, // tolerancia 30 min
+            },
+            order: [['checked_in_at','DESC']],
+          });
+          if (r) await r.update({ status: 'completed', completed_at: now });
+        }
 
         // Emitir cambio siempre
         this._emitUpdate(io, p);
-        if(estabaOcupado!==!!p.ocupado){
-          //creación de logs para los gráficos
-          await this._logParqueo(p.id,'update')
+
+        // Log si cambió el estado
+        if (estabaOcupado !== !!p.ocupado) {
+          await this._logParqueo(p.id, 'update');
         }
-        // Transición a disponible: estaba ocupado y ahora libre, y activo
+
+        // Transición a disponible y activo → waitlist (salvo reserva inmediata)
         if (p.activo && estabaOcupado === true && p.ocupado === false) {
-          await this._notifyAndClearWaitlist(p, io); 
+          if (!(await hasUpcomingOrActiveReservation(p.id, 10))) {
+            await this._notifyAndClearWaitlist(p, io);
+          }
         }
       });
 
@@ -105,11 +158,13 @@ class ParqueoController {
       this._emitUpdate(io, parqueo);
 
       if (!parqueo.ocupado) {
-        await this._notifyAndClearWaitlist(parqueo, io);
+        if (!(await hasUpcomingOrActiveReservation(parqueo.id, 10))) {
+          await this._notifyAndClearWaitlist(parqueo, io);
+        }
       }
 
       return res.status(200).send({ message: "Parqueo activado exitosamente" });
-    } catch (err) {
+    } catch {
       return res.status(500).send({ message: "Error al activar el parqueo" });
     }
   }
@@ -127,7 +182,7 @@ class ParqueoController {
       this._emitUpdate(io, parqueo);
 
       return res.status(200).send({ message: "Parqueo desactivado exitosamente" });
-    } catch (err) {
+    } catch {
       return res.status(500).send({ message: "Error al desactivar el parqueo" });
     }
   }
@@ -135,7 +190,7 @@ class ParqueoController {
   async sendNotifier(req, res) {
     try {
       const { id } = req.params;
-      const { email, nombre, ubicacion } = req.body || {};
+      const { email, nombre } = req.body || {};
 
       if (!id) return res.status(400).send({ message: "No se ha encontrado un parqueo con el id recibido." });
 
@@ -146,16 +201,18 @@ class ParqueoController {
       const parqueo = await Parqueo.findByPk(id);
       if (!parqueo) return res.status(404).send({ message: "Parqueo no encontrado." });
 
-      // Si está disponible ahora mismo → notifica al instante
+      // Disponible ahora → notifica ya (incluye fecha)
       if (parqueo.activo && !parqueo.ocupado) {
-        await enviarNotificacionParqueoDisponible(emailNorm, id, { nombre: nombre || parqueo.nombre, ubicacion });
-        // Emite evento específico para clientes suscritos a ese parqueo
+        await enviarNotificacionParqueoDisponible(emailNorm, id, {
+          nombre: nombre || parqueo.nombre,          
+          fecha: parqueo.updatedAt ?? new Date(),
+        });
         const io = req.app.locals.io;
         io.of("/parqueos").to(`parqueo:${parqueo.id}`).emit("parqueo_disponible", { id: parqueo.id });
         return res.status(200).send({ message: "Parqueo disponible, notificación enviada." });
       }
 
-      // Si está ocupado → guarda suscripción idempotente
+      // Ocupado → suscribir (idempotente)
       await ParqueoWaitlist.findOrCreate({
         where: { parqueoId: id, email: emailNorm },
         defaults: { parqueoId: id, email: emailNorm }
@@ -168,12 +225,13 @@ class ParqueoController {
     }
   }
 
-  // Helper: notificar a toda la waitlist y limpiar
-  async _notifyAndClearWaitlist(parqueo, io) { 
+  // Notificar a toda la waitlist y limpiar
+  async _notifyAndClearWaitlist(parqueo, io) {
     try {
       const subs = await ParqueoWaitlist.findAll({
         where: { parqueoId: parqueo.id, notifiedAt: null }
       });
+
       if (!subs.length) {
         io.of("/parqueos").to(`parqueo:${parqueo.id}`).emit("parqueo_disponible", { id: parqueo.id });
         return;
@@ -183,7 +241,7 @@ class ParqueoController {
         try {
           await enviarNotificacionParqueoDisponible(s.email, parqueo.id, {
             nombre: parqueo.nombre,
-            fecha: parqueo.updatedAt
+            fecha: parqueo.updatedAt ?? new Date(),
           });
           s.notifiedAt = new Date();
           await s.save();
@@ -194,10 +252,8 @@ class ParqueoController {
 
       await Promise.allSettled(jobs);
 
-      // Aviso en tiempo real por socket a suscritos conectados
       io.of("/parqueos").to(`parqueo:${parqueo.id}`).emit("parqueo_disponible", { id: parqueo.id });
 
-      // Limpia los ya notificados
       await ParqueoWaitlist.destroy({
         where: { parqueoId: parqueo.id, notifiedAt: { [Op.ne]: null } }
       });

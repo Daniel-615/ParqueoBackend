@@ -5,6 +5,7 @@ const { Server: IOServer } = require("socket.io");
 const db = require("./src/models/index.js");
 const ParqueoRoutes = require("./src/routes/parqueo.route.js");
 const StatsRoutes = require("./src/routes/stats.route.js");
+const ReservaRoutes = require("./src/routes/reserva.route.js");
 class Server {
   constructor() {
     this.app = express();
@@ -41,6 +42,7 @@ class Server {
   configureRoutes() {
     new ParqueoRoutes(this.app);
     new StatsRoutes(this.app);
+    new ReservaRoutes(this.app);
   }
 
   configureSockets() {
