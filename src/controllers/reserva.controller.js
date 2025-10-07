@@ -1,4 +1,4 @@
-
+const crypto = require('crypto');
 const db = require('../models');
 const { Op } = require('sequelize');
 const Reserva = db.getModel('Reserva');
@@ -6,57 +6,67 @@ const Parqueo = db.getModel('Parqueo');
 const { enviarCodigoConfirmacion } = require('../middleware/correos.advice');
 
 const ACTIVE_STATES = ['pending', 'active', 'in_use'];
+const TERMINAL_STATES = ['cancelled', 'expired', 'completed'];
 
-
+// Solapamiento: existe choque si (from_A < to_B) && (to_A > from_B)
 function overlapsWhere(parqueo_id, from, to) {
   return {
     parqueo_id,
-    status: ACTIVE_STATES,
-    [Op.not]: {
-      [Op.or]: [
-        { to:   { [Op.lte]: from } },
-        { from: { [Op.gte]: to }   },
-      ],
-    },
+    status: { [Op.in]: ACTIVE_STATES },
+    [Op.and]: [
+      { from: { [Op.lt]: to } },
+      { to:   { [Op.gt]: from } },
+    ],
   };
 }
 
-
 function genCode(len = 6) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+  return Array.from({ length: len }, () => chars[crypto.randomInt(0, chars.length)]).join('');
+}
+
+function toDate(x) {
+  const d = new Date(x);
+  if (Number.isNaN(+d)) throw new Error('Fecha inválida');
+  return d;
 }
 
 class ReservaController {
 
   async create(req, res) {
+    const t = await db.sequelize.transaction();
     try {
       const { parqueo_id, email, nombre, from, to, minutosValidez = 10 } = req.body || {};
       if (!parqueo_id || !email || !from || !to) {
+        await t.rollback();
         return res.status(400).json({ message: 'Faltan datos obligatorios (parqueo_id, email, from, to)' });
       }
 
-      const p = await Parqueo.findByPk(parqueo_id);
-      if (!p || !p.activo) {
-        return res.status(404).json({ message: 'Parqueo no disponible' });
-      }
-
-      const start = new Date(from);
-      const end   = new Date(to);
+      const start = toDate(from);
+      const end   = toDate(to);
       if (!(start < end)) {
+        await t.rollback();
         return res.status(400).json({ message: 'Rango de fechas inválido (from < to)' });
       }
 
-      const clash = await Reserva.count({ where: overlapsWhere(parqueo_id, start, end) });
-      if (clash) {
+      // Lock "per-slot" para evitar carreras entre reservas del mismo parqueo
+      const p = await Parqueo.findByPk(parqueo_id, { transaction: t, lock: t.LOCK.UPDATE });
+      if (!p || !p.activo) {
+        await t.rollback();
+        return res.status(404).json({ message: 'Parqueo no disponible' });
+      }
+
+      // Chequeo de solapamiento dentro de la transacción
+      const choque = await Reserva.findOne({ where: overlapsWhere(parqueo_id, start, end), transaction: t, lock: t.LOCK.UPDATE });
+      if (choque) {
+        await t.rollback();
         return res.status(409).json({ message: 'El parqueo ya está reservado en ese rango de fechas' });
       }
 
-      // Generar código + expiración
       const code = genCode(6);
       const otpExpiresAt = new Date(Date.now() + minutosValidez * 60 * 1000);
 
-      // Crear en estado "pending"
+      // Creamos en "pending"
       const r = await Reserva.create({
         parqueo_id,
         email: String(email).trim().toLowerCase(),
@@ -65,21 +75,24 @@ class ReservaController {
         from: start,
         to: end,
         status: 'pending',
-        meta: { otp_expires_at: otpExpiresAt.toISOString() },
-      });
+        meta: { otp_expires_at: otpExpiresAt.toISOString(), otp_attempts: 0 },
+      }, { transaction: t });
 
-      // Enviar email con el código
+      // Importante: enviar correo FUERA del lock pesado, pero antes de commit
       try {
         await enviarCodigoConfirmacion(String(email).trim().toLowerCase(), {
           nombre: nombre || '',
-          codigo: code,                 
+          codigo: code,
           minutosValidez,
         });
       } catch (mailErr) {
-        await r.destroy().catch(() => {});
+        // si falla el email, revertimos la creación
+        await t.rollback();
         console.error('Error enviando código:', mailErr);
         return res.status(500).json({ message: 'No se pudo enviar el código de confirmación' });
       }
+
+      await t.commit();
 
       return res.status(201).json({
         id: r.id,
@@ -87,11 +100,11 @@ class ReservaController {
         expiresAt: otpExpiresAt.toISOString(),
       });
     } catch (e) {
+      await t.rollback().catch(() => {});
       console.error('reservas.create', e);
       return res.status(500).json({ message: 'Error al crear la reserva' });
     }
   }
-
 
   async confirm(req, res) {
     try {
@@ -107,6 +120,9 @@ class ReservaController {
       }
 
       if (r.code !== code) {
+        // opcional: incrementar intentos
+        const attempts = (r.meta?.otp_attempts ?? 0) + 1;
+        await r.update({ meta: { ...r.meta, otp_attempts: attempts } });
         return res.status(403).json({ message: 'Código inválido' });
       }
 
@@ -115,11 +131,9 @@ class ReservaController {
         return res.status(400).json({ message: 'El código ha expirado' });
       }
 
-      // Si ya estamos dentro del rango ahora mismo -> in_use, si no -> active
       const now = new Date();
       const nextStatus = (r.from <= now && now < r.to) ? 'in_use' : 'active';
-
-      await r.update({ status: nextStatus });
+      await r.update({ status: nextStatus, confirmed_at: now });
 
       return res.json({ ok: true, status: nextStatus });
     } catch (e) {
@@ -128,7 +142,6 @@ class ReservaController {
     }
   }
 
-
   async cancel(req, res) {
     try {
       const { id } = req.params;
@@ -136,7 +149,7 @@ class ReservaController {
       const r = await Reserva.findByPk(id);
       if (!r) return res.status(404).json({ message: 'Reserva no encontrada' });
       if (r.code !== code) return res.status(403).json({ message: 'Código de cancelación inválido' });
-      if (['cancelled', 'expired', 'completed'].includes(r.status)) {
+      if (TERMINAL_STATES.includes(r.status)) {
         return res.status(400).json({ message: `Estado actual: ${r.status}` });
       }
       await r.update({ status: 'cancelled', canceled_at: new Date() });
@@ -146,7 +159,6 @@ class ReservaController {
       return res.status(500).json({ message: 'Error al cancelar la reserva' });
     }
   }
-
 
   async checkin(req, res) {
     try {
@@ -160,8 +172,9 @@ class ReservaController {
       if (!(r.from <= now && now < r.to)) {
         return res.status(400).json({ message: 'Fuera de la ventana de reserva' });
       }
-      if (!['pending', 'active', 'in_use'].includes(r.status)) {
-        return res.status(400).json({ message: `Estado actual: ${r.status}` });
+      // Requerir confirmación previa
+      if (!['active', 'in_use'].includes(r.status)) {
+        return res.status(400).json({ message: `La reserva debe estar confirmada. Estado actual: ${r.status}` });
       }
       await r.update({ status: 'in_use', checked_in_at: now });
       return res.json({ ok: true });
@@ -177,11 +190,12 @@ class ReservaController {
       if (!parqueo_id || !from || !to) {
         return res.status(400).json({ message: 'parqueo_id, from, to requeridos' });
       }
-      const start = new Date(from), end = new Date(to);
+      const start = toDate(from);
+      const end   = toDate(to);
       if (!(start < end)) return res.status(400).json({ message: 'Rango inválido (from < to)' });
 
-      const clash = await Reserva.count({ where: overlapsWhere(parqueo_id, start, end) });
-      return res.json({ available: clash === 0 });
+      const choque = await Reserva.findOne({ where: overlapsWhere(parqueo_id, start, end), attributes: ['id'] });
+      return res.json({ available: !choque });
     } catch (e) {
       console.error('reservas.availability', e);
       return res.status(500).json({ message: 'Error consultando disponibilidad' });
