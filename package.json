@@ -16,6 +16,7 @@
     "nodemailer": "^7.0.6",
     "pg": "^8.16.3",
     "pg-hstore": "^2.3.4",
+    "resend": "^6.2.0",
     "sequelize": "^6.37.7",
     "socket.io": "^4.8.1"
   }
